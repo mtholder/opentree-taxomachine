@@ -1,4 +1,7 @@
 package opentree.tnrs;
+//import java.lang.Long;
+import java.util.Map;
+import java.util.HashMap;
 
 import org.neo4j.graphdb.Node;
 
@@ -24,4 +27,19 @@ public abstract class TNRSMatch {
     public abstract double getScore();
     public abstract String getMatchType();
     public abstract String toString();
+    public Map<String, Object> getAttributes() {
+        Map<String, Object> hm = new HashMap<String, Object>();
+        hm.put("matched_node_id", new Long(this.getMatchedNodeId()));
+        hm.put("matched_node_name", this.getMatchedNodeName());
+//                response += "\"synonym_node_id\":" + m.getSynonymNodeId() + "\",";
+//                response += "\"synonym_node_name\":\"" + m.getSynonymNodeName() + "\","; 
+        hm.put("source", this.getSource());
+        hm.put("is_exact_node", new Boolean(this.getIsExactNode()));
+        hm.put("is_approximate_node", new Boolean(this.getIsApproximate()));
+        hm.put("is_synonym", new Boolean(this.getIsSynonym()));
+        hm.put("is_homonym", new Boolean(this.getIsHomonym()));
+        hm.put("score", new Double(this.getScore()));
+        return hm;
+    }
+    
 }
