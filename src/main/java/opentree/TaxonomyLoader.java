@@ -14,6 +14,7 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Properties;
 import java.util.StringTokenizer;
 
 /**
@@ -63,7 +64,14 @@ public class TaxonomyLoader extends TaxonomyBase{
 	 * @param filename file path to the taxonomy file
 	 * @param synonymfile file that holds the synonym
 	 */
-	public void initializeTaxonomyIntoGraph(String sourcename, String filename, String synonymfile){
+	public void initializeTaxonomyIntoGraph(String propfilename,
+	                                        String filename,
+	                                        String synonymfile)
+	                                        throws FileNotFoundException, IOException {
+	    FileInputStream prop_in_stream = new FileInputStream(propfilename);
+	    Properties prop = new Properties();
+	    prop.load(prop_in_stream);
+	    String sourcename = prop.getProperty("sourcename");
 		String str = "";
 		int count = 0;
 		Transaction tx;
