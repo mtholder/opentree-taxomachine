@@ -17,6 +17,9 @@ import java.util.Iterator;
 import java.util.Properties;
 import java.util.StringTokenizer;
 
+
+ 
+
 /**
  * TaxonomyLoader is intended to control the initial creation 
  * and addition of taxonomies to the taxonomy graph.
@@ -46,7 +49,50 @@ public class TaxonomyLoader extends TaxonomyBase{
 		taxSourceIndex = graphDb.index().forNodes("taxSources");
 	}
 	
+	/**
+	 * Reads a Synonomy rows formatted as:
+	 * id\t|\tname\t|\tsynonym_type
+	 * @param synonymfile filepath of the synonym file
+	 * @returns hash with ID as key and the value is an array list of  [name, type] pairs (also as ArrayList objects).
+	 */
+	HashMap<String,ArrayList<ArrayList<String>>> readSynonymsFile(String synonymfile) throws FileNotFoundException, IOException {
+		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = new HashMap<String,ArrayList<ArrayList<String>>>();
+		String str = "";
+		BufferedReader sbr = new BufferedReader(new FileReader(synonymfile));
+		while((str = sbr.readLine())!=null){
+			StringTokenizer st = new StringTokenizer(str,"\t|\t");
+			String id = st.nextToken();
+			String name = st.nextToken();
+			String type = st.nextToken();
+			ArrayList<String> tar = new ArrayList<String>();
+			tar.add(name);
+			tar.add(type);
+			if (synonymhash.get(id) == null){
+				ArrayList<ArrayList<String> > ttar = new ArrayList<ArrayList<String> >();
+				synonymhash.put(id, ttar);
+			}
+			synonymhash.get(id).add(tar);
+		}
+		return synonymhash;
+	}
 	
+	Node createTaxonomySourceMetadataNode(Properties prop) {
+		String sourcename = prop.getProperty("name");
+		String sourceversion = prop.getProperty("version");
+		Transaction tx = graphDb.beginTx();
+		//create the metadata node
+		Node metadatanode = null;
+		try{
+			metadatanode = graphDb.createNode();
+			metadatanode.setProperty("source", sourcename);
+			metadatanode.setProperty("author", "no one");
+			taxSourceIndex.add(metadatanode, "source", sourcename);
+			tx.success();
+		}finally{
+			tx.finish();
+		}
+		return metadatanode;
+	}
 	/**
 	 * Reads a taxonomy file with rows formatted as:
 	 *	taxon_id\t|\tparent_id\t|\tName with spaces allowed\n
@@ -65,62 +111,63 @@ public class TaxonomyLoader extends TaxonomyBase{
 	 * @param synonymfile file that holds the synonym
 	 */
 	public void initializeTaxonomyIntoGraph(String propfilename,
-	                                        String filename,
-	                                        String synonymfile)
-	                                        throws FileNotFoundException, IOException {
-	    FileInputStream prop_in_stream = new FileInputStream(propfilename);
-	    Properties prop = new Properties();
-	    prop.load(prop_in_stream);
-	    String sourcename = prop.getProperty("sourcename");
-		String str = "";
-		int count = 0;
-		Transaction tx;
-		ArrayList<String> templines = new ArrayList<String>();
+											String filename,
+											String synonymfile)
+											throws FileNotFoundException, IOException {
+		FileInputStream prop_in_stream = new FileInputStream(propfilename);
+		Properties prop = new Properties();
+		prop.load(prop_in_stream);
+		String sourcename = prop.getProperty("name");
+		String sourceformat = prop.getProperty("format");
+		if (sourceformat.equalsIgnoreCase("DWC")) {
+			// Darwin core file
+			System.err.println("DWC\n");
+			/*
+			// Example usage of reading DarwinCore from http://gbif.blogspot.com/2009/07/darwin-core-archive-reader-part1.html
+			Archive archive = ArchiveFactory.openArchive(new File(filename));
+			if (!archive.getCore().hasTerm(DwcTerm.scientificName)){
+			   System.out.println("This application requires dwc-a with scientific names");
+			   System.exit(1);
+			}
+			Iterator<DarwinCoreRecord> a_iter = archive.iteratorDwc();
+			DarwinCoreRecord dwc;
+			long x = 1;
+			while(a_iter.hasNext()){
+				dwc = a_iter.next();
+				if (null != dwc.id()) {
+					System.out.println("ID = " + dwc.id() + " ParentID = " + dwc.getParentNameUsageID() + " canonicalName = " + dwc.getProperty(GbifTerm.canonicalName) + " getTaxonAttributes = " + dwc.getTaxonAttributes());
+					x += 1;
+					if (x > 1000) {
+						break;
+					}
+				}
+			}
+			System.err.println("x= " + x + "\n");
+			*/
+		} else {
+			System.err.println("not DWC\n");
+		}
+		System.exit(0);
+		
+		//key is the id from the taxonomy, the array has the synonym and the type of synonym
 		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = null;
 		boolean synFileExists = false;
 		if(synonymfile.length()>0)
 			synFileExists = true;
-		//preprocess the synonym file
-		//key is the id from the taxonomy, the array has the synonym and the type of synonym
 		if(synFileExists){
-			synonymhash = new HashMap<String,ArrayList<ArrayList<String>>>();
-			try {
-				BufferedReader sbr = new BufferedReader(new FileReader(synonymfile));
-				while((str = sbr.readLine())!=null){
-					StringTokenizer st = new StringTokenizer(str,"\t|\t");
-					String id = st.nextToken();
-					String name = st.nextToken();
-					String type = st.nextToken();
-					ArrayList<String> tar = new ArrayList<String>();
-					tar.add(name);tar.add(type);
-					if (synonymhash.get(id) == null){
-						ArrayList<ArrayList<String> > ttar = new ArrayList<ArrayList<String> >();
-						synonymhash.put(id, ttar);
-					}
-					synonymhash.get(id).add(tar);
-				}
-			} catch (Exception e) {
-				e.printStackTrace();
-				System.exit(0);
-			}
-			System.out.println("synonyms: "+synonymhash.size());
+			synonymhash = readSynonymsFile(synonymfile);
+			System.out.println("synonyms: " + synonymhash.size());
 		}
-		//finished processing synonym file
+
+		Node metadatanode = createTaxonomySourceMetadataNode(prop);
+		String str = "";
+		int count = 0;
+		Transaction tx;
+		ArrayList<String> templines = new ArrayList<String>();
+
 		HashMap<String, Node> dbnodes = new HashMap<String, Node>();
 		HashMap<String, String> parents = new HashMap<String, String>();
 		try{
-			tx = graphDb.beginTx();
-			//create the metadata node
-			Node metadatanode = null;
-			try{
-				metadatanode = graphDb.createNode();
-				metadatanode.setProperty("source", sourcename);
-				metadatanode.setProperty("author", "no one");
-				taxSourceIndex.add(metadatanode, "source", sourcename);
-				tx.success();
-			}finally{
-				tx.finish();
-			}
 			BufferedReader br = new BufferedReader(new FileReader(filename));
 			while((str = br.readLine())!=null){
 				count += 1;
@@ -259,7 +306,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 	
 	/**
 	 * Returns a pair of integers that reflect the indices of element in the lists
-	 * 	that match (lowest index of an element in keylist, and its match in
+	 *	that match (lowest index of an element in keylist, and its match in
 	 *	list1). 
 	 * 
 	 * @param keylist first array of strings to search
@@ -751,7 +798,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 						hits.close();
 						_LOG.warn("adding duplicate " + strname);
 //						if(_LOG.isDebugEnabled()) {
-//							_LOG.debug("path1:    " + strname + " -> " + this.taxonPathAsString(path1));
+//							_LOG.debug("path1:	  " + strname + " -> " + this.taxonPathAsString(path1));
 //							_LOG.debug("bestpath: " + strname + " -> " + this.taxonPathAsString(bestpath));
 //							_LOG.debug("bestcount = " + bestcount + " path1.size() - bestcount =" + (path1.size() - bestcount));
 //						}
@@ -836,7 +883,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 						if (bestitem == null){
 							System.out.println("adding duplicate parent "+strparentname);
 //							if(_LOG.isDebugEnabled()) {
-//								_LOG.debug("path1:    " + strname + " -> " + this.taxonPathAsString(path1));
+//								_LOG.debug("path1:	  " + strname + " -> " + this.taxonPathAsString(path1));
 //								_LOG.debug("bestcount = " + bestcount + " path1.size() - bestcount =" + (path1.size() - bestcount));
 //							}
 							tx = graphDb.beginTx();
