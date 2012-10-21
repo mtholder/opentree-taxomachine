@@ -49,7 +49,7 @@ public abstract class TaxonomyBase {
 	 * helper function primarily written to avoid forgetting to call hits.close();
 	 */
     Node findTaxNodeByName(final String name) {
-        IndexHits<Node> hits = this.taxNodeIndex.get("name", name);
+        IndexHits<Node> hits = TaxonomyBase.taxNodeIndex.get("name", name);
 		Node firstNode = hits.getSingle();
 		hits.close();
 		return firstNode;

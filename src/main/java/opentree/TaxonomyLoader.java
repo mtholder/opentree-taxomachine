@@ -1,24 +1,35 @@
 package opentree;
 
 
-import org.neo4j.cypher.javacompat.ExecutionEngine;
-import org.neo4j.cypher.javacompat.ExecutionResult;
-import org.neo4j.graphalgo.GraphAlgoFactory;
-import org.neo4j.graphalgo.PathFinder;
-import org.neo4j.graphdb.*;
-import org.neo4j.graphdb.index.IndexHits;
-import org.neo4j.graphdb.traversal.TraversalDescription;
-import org.neo4j.kernel.*;
-import org.apache.log4j.Logger;
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Properties;
 import java.util.StringTokenizer;
 
-
- 
+import org.apache.log4j.Logger;
+import org.gbif.dwc.record.Record;
+import org.gbif.dwc.terms.DwcTerm;
+import org.gbif.dwc.terms.GbifTerm;
+import org.gbif.dwc.text.Archive;
+import org.gbif.dwc.text.ArchiveFactory;
+import org.gbif.dwc.text.StarRecord;
+import org.neo4j.graphalgo.GraphAlgoFactory;
+import org.neo4j.graphalgo.PathFinder;
+import org.neo4j.graphdb.Direction;
+import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.Path;
+import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.Transaction;
+import org.neo4j.graphdb.index.IndexHits;
+import org.neo4j.graphdb.traversal.TraversalDescription;
+import org.neo4j.kernel.EmbeddedGraphDatabase;
+import org.neo4j.kernel.Traversal;
 
 /**
  * TaxonomyLoader is intended to control the initial creation 
@@ -94,14 +105,45 @@ public class TaxonomyLoader extends TaxonomyBase{
 		return metadatanode;
 	}
 	
+	private void commitNewTaxonomyRelationships(ArrayList<String> temppar, 
+												HashMap<String, Node> dbnodes,
+												HashMap<String, String> parents, 
+												Properties prop) {
+		Transaction tx = graphDb.beginTx();
+		String sourcename = prop.getProperty("name");
+		try{
+			for (int i=0;i<temppar.size();i++){
+				try {
+					Relationship rel = dbnodes.get(temppar.get(i)).createRelationshipTo(dbnodes.get(parents.get(temppar.get(i))), RelTypes.TAXCHILDOF);
+					rel.setProperty("source", sourcename);
+					rel.setProperty("childid",temppar.get(i));
+					rel.setProperty("parentid",parents.get(temppar.get(i)));
+				}catch(java.lang.IllegalArgumentException io){
+//						System.out.println(temppar.get(i));
+					continue;
+				}
+			}
+			tx.success();
+		}finally{
+			tx.finish();
+		}
+		
+	}
+	
+	private Node createNewTaxonomyNode(String taxonName) {
+		Node tnode = graphDb.createNode();
+		tnode.setProperty("name", taxonName);
+		taxNodeIndex.add( tnode, "name", taxonName);
+		return tnode;
+	}
 	
 	private ArrayList<Node> initCommitLinesToGraph(ArrayList<String> templines, 
-								Node metadatanode,
 								HashMap<String,ArrayList<ArrayList<String>>> synonymhash,
 								HashMap<String, Node> dbnodes,
-								HashMap<String, String> parents) {
+								HashMap<String, String> parents,
+								Properties prop) {
 		boolean synFileExists = synonymhash.isEmpty();
-		String sourcename = (String) metadatanode.getProperty("source");
+		String sourcename = (String) prop.getProperty("name");
 		Transaction tx = graphDb.beginTx();
 		ArrayList<Node> parentless = new ArrayList<Node>();
 		try{
@@ -113,9 +155,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 				if(numtok == 3)
 					second = st.nextToken();
 				String third = st.nextToken();
-				Node tnode = graphDb.createNode();
-				tnode.setProperty("name", third);
-				taxNodeIndex.add( tnode, "name", third);
+				Node tnode = createNewTaxonomyNode(third);
 				dbnodes.put(first, tnode);
 				if (numtok == 3){
 					parents.put(first, second);
@@ -128,9 +168,9 @@ public class TaxonomyLoader extends TaxonomyBase{
 						ArrayList<ArrayList<String>> syns = synonymhash.get(first);
 						for(int j=0;j<syns.size();j++){
 							Node synode = graphDb.createNode();
-							synode.setProperty("name",syns.get(j).get(0));
-							synode.setProperty("nametype",syns.get(j).get(1));
-							synode.setProperty("source",sourcename);
+							synode.setProperty("name", syns.get(j).get(0));
+							synode.setProperty("nametype", syns.get(j).get(1));
+							synode.setProperty("source", sourcename);
 							synode.createRelationshipTo(tnode, RelTypes.SYNONYMOF);
 						}
 					}
@@ -141,6 +181,214 @@ public class TaxonomyLoader extends TaxonomyBase{
 			tx.finish();
 		}
 		return parentless;
+	}
+
+	/**
+	 * Reads a file in the format:
+	 * id	| parentID	|	name
+	 * and fills dbnodes and parents with the id to Node and id to parent ID lookup info
+	 * 
+	 * @param filename file to be read
+	 * @param synonymfile if not an empty string, this should be a synonym file
+	 * @param metadatanode Node in the graph that corresponds to this source
+	 * @param dbnodes taxonomic source id to graph node map
+	 * @param parents taxonomic source id to parent taxonomic source id
+	 * @param prop Properties object that has been initialize with info relevant to this source.
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	private void readTabPipeTabDelimited(String filename, 
+								 String synonymfile,
+								 Node metadatanode,
+								 HashMap<String, Node> dbnodes,
+								 HashMap<String, String> parents,
+								 Properties prop) throws FileNotFoundException, IOException {
+
+		// key is the id from the taxonomy, the array has the synonym and the type of synonym
+		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = null;
+		boolean synFileExists = false;
+		if(synonymfile.length()>0)
+			synFileExists = true;
+		if(synFileExists){
+			synonymhash = readSynonymsFile(synonymfile);
+			System.out.println("synonyms: " + synonymhash.size());
+		}
+
+		String str = "";
+		ArrayList<String> templines = new ArrayList<String>();
+
+		BufferedReader br = new BufferedReader(new FileReader(filename));
+		ArrayList<Node> parentless;
+		int count = 0;
+		while((str = br.readLine())!=null){
+			count += 1;
+			templines.add(str);
+			if (count % transaction_iter == 0){
+				System.out.print(count);
+				System.out.print("\n");
+				parentless = initCommitLinesToGraph(templines,
+													synonymhash,
+													dbnodes,
+													parents,
+													prop);
+				for (Node rootNd : parentless) {
+					System.out.println("created root node and metadata link");
+					metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+				}
+				templines.clear();
+			}
+		}
+		br.close();
+		parentless = initCommitLinesToGraph(templines,
+											synonymhash,
+											dbnodes,
+											parents,
+											prop);
+		for (Node rootNd : parentless) {
+			System.out.println("created root node and metadata link");
+			metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+		}
+		templines.clear();
+	}
+	/**
+	 * Reads a file in the format:
+	 * id	| parentID	|	name
+	 * and fills dbnodes and parents with the id to Node and id to parent ID lookup info
+	 * 
+	 * @param filename file to be read
+	 * @param synonymfile if not an empty string, this should be a synonym file
+	 * @param metadatanode Node in the graph that corresponds to this source
+	 * @param dbnodes taxonomic source id to graph node map
+	 * @param parents taxonomic source id to parent taxonomic source id
+	 * @param prop Properties object that has been initialize with info relevant to this source.
+	 * @throws FileNotFoundException
+	 * @throws IOException
+	 */
+	private void readGBIF(String archiveDir, 
+						  Node metadatanode,
+						  HashMap<String, Node> dbnodes,
+						  HashMap<String, String> parents,
+						  Properties prop) throws FileNotFoundException, IOException {
+
+		Archive archive = ArchiveFactory.openArchive(new File(archiveDir));
+		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = new HashMap<String,ArrayList<ArrayList<String>>>();
+		ArrayList<Node> parentless = new ArrayList<Node>();
+		int count = 0;
+		Transaction tx = graphDb.beginTx();
+		try {
+			for (StarRecord dwc : archive){
+				count += 1;
+				Record record = dwc.core();
+				String taxonName = record.value(GbifTerm.canonicalName);
+				String ndId = record.id();
+				if (ndId != null && taxonName != null) {
+					count += 1;
+					String parId = record.value(DwcTerm.parentNameUsageID);
+					
+					Node tnode = createNewTaxonomyNode(taxonName);
+					dbnodes.put(ndId, tnode);
+					String acceptedNameID = record.value(DwcTerm.acceptedNameUsageID);
+					if (acceptedNameID != null) {
+						ArrayList<String> tar = new ArrayList<String>();
+						tar.add(taxonName);
+						String ts = record.value(DwcTerm.taxonomicStatus); 
+						tar.add(ts);
+						tar.add(ndId);
+						if (synonymhash.get(acceptedNameID) == null){
+							ArrayList<ArrayList<String> > ttar = new ArrayList<ArrayList<String> >();
+							synonymhash.put(acceptedNameID, ttar);
+						}
+						synonymhash.get(acceptedNameID).add(tar);
+					}
+					else {
+						if (parId != null) {
+							parents.put(ndId, parId);
+						}
+						else {
+							parentless.add(tnode);
+						}
+						String rank = record.value(DwcTerm.taxonRank);
+						if (rank != null) {
+							tnode.setProperty("rank", rank);
+						}
+						
+					}
+				}
+				if (count % transaction_iter == 0){
+					tx.success();
+					tx.finish();
+					tx = graphDb.beginTx();
+				}
+			}
+			tx.success();
+			tx.finish();
+			tx = null;
+				
+		} finally {
+			if (tx != null) {
+				tx.finish();
+			}
+		}
+		tx = graphDb.beginTx();
+		String sourcename = prop.getProperty("name");
+		try {
+			count = 0;
+			
+			for (String key : dbnodes.keySet()) {
+				ArrayList<ArrayList<String>> syns = synonymhash.get(key);
+				if (syns != null) {
+					Node validNode = dbnodes.get(key);
+					for (int j = 0; j < syns.size(); j++) {
+						count += 1;
+						Node synode = graphDb.createNode();
+						ArrayList<String> row = syns.get(j);
+						synode.setProperty("name", row.get(0));
+						synode.setProperty("nametype", row.get(1));
+						synode.setProperty("id_in_source", row.get(2));
+						synode.setProperty("source", sourcename);
+						synode.createRelationshipTo(validNode, RelTypes.SYNONYMOF);
+						if (count % transaction_iter == 0){
+							tx.success();
+							tx.finish();
+							tx = graphDb.beginTx();
+						}
+					}
+				}
+			}
+			for (Node rootNd : parentless) {
+				System.out.println("created root node and metadata link");
+				metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+			}
+			tx.success();
+		} finally {
+			tx.finish();
+		}
+		/*
+				System.out.print(count);
+				System.out.print("\n");
+				parentless = initCommitLinesToGraph(templines,
+													synonymhash,
+													dbnodes,
+													parents,
+													prop);
+				for (Node rootNd : parentless) {
+					System.out.println("created root node and metadata link");
+					metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+				}
+				templines.clear();
+			}
+		}
+		br.close();
+		parentless = initCommitLinesToGraph(templines,
+											synonymhash,
+											dbnodes,
+											parents,
+											prop);
+		for (Node rootNd : parentless) {
+			System.out.println("created root node and metadata link");
+			metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+		}
+		templines.clear();*/
 	}
 	/**
 	 * Reads a taxonomy file with rows formatted as:
@@ -166,8 +414,11 @@ public class TaxonomyLoader extends TaxonomyBase{
 		FileInputStream prop_in_stream = new FileInputStream(propfilename);
 		Properties prop = new Properties();
 		prop.load(prop_in_stream);
-		String sourcename = prop.getProperty("name");
 		String sourceformat = prop.getProperty("format");
+		
+		HashMap<String, Node> dbnodes = new HashMap<String, Node>();
+		HashMap<String, String> parents = new HashMap<String, String>();
+		Node metadatanode = createTaxonomySourceMetadataNode(prop);
 		if (sourceformat.equalsIgnoreCase("DWC")) {
 			// Darwin core file
 			System.err.println("DWC\n");
@@ -193,105 +444,24 @@ public class TaxonomyLoader extends TaxonomyBase{
 			}
 			System.err.println("x= " + x + "\n");
 			*/
+			readGBIF(filename, metadatanode, dbnodes, parents, prop);
 		} else {
-			System.err.println("not DWC\n");
+			readTabPipeTabDelimited(filename, synonymfile, metadatanode, dbnodes, parents, prop);
 		}
-		System.exit(0);
 		
-		//key is the id from the taxonomy, the array has the synonym and the type of synonym
-		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = null;
-		boolean synFileExists = false;
-		if(synonymfile.length()>0)
-			synFileExists = true;
-		if(synFileExists){
-			synonymhash = readSynonymsFile(synonymfile);
-			System.out.println("synonyms: " + synonymhash.size());
-		}
-
-		Node metadatanode = createTaxonomySourceMetadataNode(prop);
-		String str = "";
-		int count = 0;
-		Transaction tx;
-		ArrayList<String> templines = new ArrayList<String>();
-
-		HashMap<String, Node> dbnodes = new HashMap<String, Node>();
-		HashMap<String, String> parents = new HashMap<String, String>();
-		BufferedReader br = new BufferedReader(new FileReader(filename));
-		ArrayList<Node> parentless;
-		while((str = br.readLine())!=null){
-			count += 1;
-			templines.add(str);
-			if (count % transaction_iter == 0){
-				System.out.print(count);
-				System.out.print("\n");
-				parentless = initCommitLinesToGraph(templines, 
-															   metadatanode,
-															   synonymhash,
-															   dbnodes,
-															   parents);
-				for (Node rootNd : parentless) {
-					System.out.println("created root node and metadata link");
-					metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
-				}
-				templines.clear();
-			}
-		}
-		br.close();
-		parentless = initCommitLinesToGraph(templines, 
-													   metadatanode,
-													   synonymhash,
-													   dbnodes,
-													   parents);
-		for (Node rootNd : parentless) {
-			System.out.println("created root node and metadata link");
-			metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
-		}
-		templines.clear();
-		//add the relationships
+		//add the relationships based on dbnodes and parents
 		ArrayList<String> temppar = new ArrayList<String>();
-		count = 0;
+		int count = 0;
 		for(String key: dbnodes.keySet()){
 			count += 1;
 			temppar.add(key);
 			if (count % transaction_iter == 0){
 				System.out.println(count);
-				tx = graphDb.beginTx();
-				try{
-					for (int i=0;i<temppar.size();i++){
-						try {
-							Relationship rel = dbnodes.get(temppar.get(i)).createRelationshipTo(dbnodes.get(parents.get(temppar.get(i))), RelTypes.TAXCHILDOF);
-							rel.setProperty("source", sourcename);
-							rel.setProperty("childid",temppar.get(i));
-							rel.setProperty("parentid",parents.get(temppar.get(i)));
-						}catch(java.lang.IllegalArgumentException io){
-//								System.out.println(temppar.get(i));
-							continue;
-						}
-					}
-					tx.success();
-				}finally{
-					tx.finish();
-				}
+				commitNewTaxonomyRelationships(temppar, dbnodes, parents, prop);
 				temppar.clear();
 			}
 		}
-		tx = graphDb.beginTx();
-		try{
-			for (int i=0;i<temppar.size();i++){
-				try {
-					Relationship rel = dbnodes.get(temppar.get(i)).createRelationshipTo(dbnodes.get(parents.get(temppar.get(i))), RelTypes.TAXCHILDOF);
-					rel.setProperty("source", sourcename);
-					rel.setProperty("childid",temppar.get(i));
-					rel.setProperty("parentid",parents.get(temppar.get(i)));
-				}catch(java.lang.IllegalArgumentException io){
-//						System.out.println(temppar.get(i));
-					continue;
-				}
-			}
-			tx.success();
-		}finally{
-			tx.finish();
-		}
+		commitNewTaxonomyRelationships(temppar, dbnodes, parents, prop);
 	}
 	
 	/**

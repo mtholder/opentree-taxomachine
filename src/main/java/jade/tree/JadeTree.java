@@ -105,7 +105,7 @@ public class JadeTree {
 	 * O(N) lookup.
 	 */
 	public JadeNode getExternalNode(String name) {
-		Iterator go = externalNodes.iterator();
+		Iterator<JadeNode> go = externalNodes.iterator();
 		while (go.hasNext()) {
 			JadeNode ne = (JadeNode) go.next();
 			if (ne.getName().compareTo(name) == 0) {
@@ -128,7 +128,7 @@ public class JadeTree {
 	 * O(N) lookup.
 	 */
 	public JadeNode getInternalNode(String name) {
-		Iterator go = internalNodes.iterator();
+		Iterator<JadeNode> go = internalNodes.iterator();
 		while (go.hasNext()) {
 			JadeNode ne = (JadeNode) go.next();
 			if (ne.getName().compareTo(name) == 0) {

@@ -1,5 +1,9 @@
 package opentree;
 
+import jade.tree.JadeNode;
+import jade.tree.JadeTree;
+import jade.tree.TreeReader;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -7,22 +11,16 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
-
-import jade.tree.JadeNode;
-import jade.tree.JadeTree;
-import jade.tree.TreeReader;
-import opentree.TaxonomyBase.RelTypes;
 
 import org.neo4j.graphalgo.GraphAlgoFactory;
 import org.neo4j.graphalgo.PathFinder;
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Path;
-import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.graphdb.StopEvaluator;
-import org.neo4j.graphdb.ReturnableEvaluator;
 import org.neo4j.graphdb.Relationship;
+import org.neo4j.graphdb.RelationshipType;
+import org.neo4j.graphdb.ReturnableEvaluator;
+import org.neo4j.graphdb.StopEvaluator;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.Traverser;
 import org.neo4j.graphdb.index.IndexHits;
