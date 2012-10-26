@@ -7,7 +7,9 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.regex.Pattern;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Properties;
 import java.util.StringTokenizer;
@@ -251,16 +253,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 		templines.clear();
 	}
 	/**
-	 * Reads a file in the format:
-	 * id	| parentID	|	name
-	 * and fills dbnodes and parents with the id to Node and id to parent ID lookup info
-	 * 
-	 * @param filename file to be read
-	 * @param synonymfile if not an empty string, this should be a synonym file
-	 * @param metadatanode Node in the graph that corresponds to this source
-	 * @param dbnodes taxonomic source id to graph node map
-	 * @param parents taxonomic source id to parent taxonomic source id
-	 * @param prop Properties object that has been initialize with info relevant to this source.
+	 * Reads the GBIF taxonomy
 	 * @throws FileNotFoundException
 	 * @throws IOException
 	 */
@@ -269,10 +262,11 @@ public class TaxonomyLoader extends TaxonomyBase{
 						  HashMap<String, Node> dbnodes,
 						  HashMap<String, String> parents,
 						  Properties prop) throws FileNotFoundException, IOException {
-
-		Archive archive = ArchiveFactory.openArchive(new File(archiveDir));
 		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = new HashMap<String,ArrayList<ArrayList<String>>>();
 		ArrayList<Node> parentless = new ArrayList<Node>();
+		if (false) {
+/*
+		Archive archive = ArchiveFactory.openArchive(new File(archiveDir));
 		int count = 0;
 		Transaction tx = graphDb.beginTx();
 		try {
@@ -309,10 +303,46 @@ public class TaxonomyLoader extends TaxonomyBase{
 						}
 						String rank = record.value(DwcTerm.taxonRank);
 						if (rank != null) {
-							tnode.setProperty("rank", rank);
+							tnode.setProperty("gbif_rank", rank);
 						}
-						
+						String kingdom = record.value(DwcTerm.kingdom);
+						if (kingdom != null) {
+							tnode.setProperty("gbif_kingdom", kingdom);
+						}
+						String phylum = record.value(DwcTerm.phylum);
+						if (phylum != null) {
+							tnode.setProperty("gbif_phylum", phylum);
+						}
+						String classs = record.value(DwcTerm.classs);
+						if (classs != null) {
+							tnode.setProperty("gbif_class", classs);
+						}
+						String family = record.value(DwcTerm.family);
+						if (family != null) {
+							tnode.setProperty("gbif_family", family);
+						}
+						String genus = record.value(DwcTerm.genus);
+						if (family != null) {
+							tnode.setProperty("gbif_genus", genus);
+						}
+						String spEpi = record.value(DwcTerm.specificEpithet);
+						if (spEpi != null) {
+							tnode.setProperty("gbif_sp_epithet", spEpi);
+						}
+						String infraSpEpi = record.value(DwcTerm.infraspecificEpithet);
+						if (infraSpEpi != null) {
+							tnode.setProperty("gbif_infra_sp_epithet", infraSpEpi);
+						}
 					}
+					String taxonomicStatus = record.value(DwcTerm.taxonomicStatus);
+					if (taxonomicStatus != null) {
+						tnode.setProperty("gbif_taxonomic_status", taxonomicStatus);
+					}
+					String nomStatus = record.value(DwcTerm.nomenclaturalStatus);
+					if (nomStatus != null) {
+						tnode.setProperty("gbif_nomenclatural_status", nomStatus);
+					}
+					
 				}
 				if (count % transaction_iter == 0){
 					tx.success();
@@ -388,7 +418,143 @@ public class TaxonomyLoader extends TaxonomyBase{
 			System.out.println("created root node and metadata link");
 			metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
 		}
-		templines.clear();*/
+		templines.clear(); */
+		}
+		else {
+			Pattern tabPattern = Pattern.compile("\t");
+			BufferedReader br = new BufferedReader(new FileReader(archiveDir));
+			int count = 0;
+			String str = "";
+			Transaction tx = graphDb.beginTx();
+			try {
+				while((str = br.readLine()) != null) {
+					// -1 indicates that the array can be any length, and trailing empty matches are *not* discarded
+					String [] tokenList = tabPattern.split(str, -1); 
+					String acceptedNameUsageIDStr = tokenList[2];
+					/*
+					System.out.println("\"" + str + "\"");
+					
+					System.out.println("length = " + tokenList.length);
+					for (int ii = 0; ii < tokenList.length; ++ii) {
+						System.out.println("\"" + tokenList[ii] + "\"");
+					}
+					*/
+					if ("".equals(acceptedNameUsageIDStr)) {
+						String gbifIDStr = tokenList[0];
+						String parentNameUsageIDStr = tokenList[1];
+						String scientificNameStr = tokenList[3];
+						String canonicalNameStr = tokenList[4];
+						String taxonRankStr = tokenList[5];
+						String taxonomicStatusStr = tokenList[6];
+						String nomenclaturalStatusStr = tokenList[7];
+						String genusStr = tokenList[8];
+						String specificEpithetStr = tokenList[9];
+						String infraspecificEpithetStr = tokenList[10];
+						String namePublishedInStr = tokenList[11];
+						String nameAccordingToStr = tokenList[12];
+						String kingdomStr = tokenList[13];
+						String phylumStr = tokenList[14];
+						String classStr = tokenList[15];
+						String orderStr = tokenList[16];
+						String familyStr = tokenList[17];
+
+						Node tnode = createNewTaxonomyNode(canonicalNameStr);
+						dbnodes.put(gbifIDStr, tnode);
+						if ("".equals(parentNameUsageIDStr)) {
+							parentless.add(tnode);
+						}
+						else {
+							parents.put(gbifIDStr, parentNameUsageIDStr);
+						}
+						tnode.setProperty("gbif_ID", gbifIDStr);
+						tnode.setProperty("gbif_parentNameUsageID", parentNameUsageIDStr);
+						tnode.setProperty("gbif_scientificName", scientificNameStr);
+						tnode.setProperty("gbif_canonicalName", canonicalNameStr);
+						tnode.setProperty("gbif_taxonRank", taxonRankStr);
+						tnode.setProperty("gbif_taxonomicStatus", taxonomicStatusStr);
+						tnode.setProperty("gbif_nomenclaturalStatus", nomenclaturalStatusStr);
+						tnode.setProperty("gbif_genus", genusStr);
+						tnode.setProperty("gbif_specificEpithet", specificEpithetStr);
+						tnode.setProperty("gbif_infraspecificEpithet", infraspecificEpithetStr);
+						tnode.setProperty("gbif_namePublishedIn", namePublishedInStr);
+						tnode.setProperty("gbif_nameAccordingTo", nameAccordingToStr);
+						tnode.setProperty("gbif_kingdom", kingdomStr);
+						tnode.setProperty("gbif_phylum", phylumStr);
+						tnode.setProperty("gbif_class", classStr);
+						tnode.setProperty("gbif_order", orderStr);
+						tnode.setProperty("gbif_family", familyStr);
+
+						count += 1;
+						if (count % transaction_iter == 0){
+							
+							tx.success();
+							tx.finish();
+							tx = graphDb.beginTx();
+							System.err.println("Ingested " + count + " accepted names.");
+						}
+					}
+					else {
+						ArrayList<String> tar = new ArrayList<String>(Arrays.asList(tokenList));
+						if (synonymhash.get(acceptedNameUsageIDStr) == null){
+							ArrayList<ArrayList<String> > ttar = new ArrayList<ArrayList<String> >();
+							synonymhash.put(acceptedNameUsageIDStr, ttar);
+						}
+						synonymhash.get(acceptedNameUsageIDStr).add(tar);
+					}
+					
+				}
+				tx.success();
+				System.err.println("Ingested " + count + " accepted names.");
+
+			} finally {
+				tx.finish();
+			}
+			
+			// At this point, all of the rows without "acceptedNameUsageID" fields will have been ingested
+			//	and recorded in dbnodes.
+			// All rows with a acceptedNameUsageID field will be stored in synonymhash where the key
+			//	is the id of the accepted name
+			// We'll add them the synonym nodes for all of the (presumably valid) names here 
+			tx = graphDb.beginTx();
+			String sourcename = prop.getProperty("name");
+			try {
+				count = 0;
+				for (String key : dbnodes.keySet()) {
+					ArrayList<ArrayList<String>> syns = synonymhash.get(key);
+					if (syns != null) {
+						Node validNode = dbnodes.get(key);
+						for (int j = 0; j < syns.size(); j++) {
+							count += 1;
+							Node synode = graphDb.createNode();
+							ArrayList<String> row = syns.get(j);
+							String gbifIDStr = row.get(0);
+							String canonicalNameStr = row.get(4);
+							String taxonomicStatusStr = row.get(6);
+							synode.setProperty("name", canonicalNameStr);
+							synode.setProperty("nametype", taxonomicStatusStr);
+							synode.setProperty("gbif_ID", gbifIDStr);
+							synode.setProperty("source", sourcename);
+							synode.createRelationshipTo(validNode, RelTypes.SYNONYMOF);
+							if (count % transaction_iter == 0){
+								System.err.println("Ingested " + count + " synonyms.");
+								tx.success();
+								tx.finish();
+								tx = graphDb.beginTx();
+							}
+						}
+					}
+				}
+				System.err.println("Ingested " + count + " synonyms.");
+				tx.success();
+			} finally {
+				tx.finish();
+			}
+			
+			for (Node rootNd : parentless) {
+				System.out.println("created root node and metadata link");
+				metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+			}
+		}
 	}
 	/**
 	 * Reads a taxonomy file with rows formatted as:
