@@ -438,7 +438,6 @@ public class JadeTree {
 	 *
 	 */
 	private static JadeNode getMRCATraverse(JadeNode curn1, JadeNode curn2) {
-		JadeNode mrca = null;
 		//get path to root for first node
 		ArrayList<JadeNode> path1 = new ArrayList<JadeNode>();
 		JadeNode parent = curn1;

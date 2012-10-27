@@ -38,7 +38,7 @@ import org.neo4j.kernel.Traversal;
  * and addition of taxonomies to the taxonomy graph.
  *
  */
-public class TaxonomyLoader extends TaxonomyBase{
+public class TaxonomyLoader extends TaxonomyBase {
 	static Logger _LOG = Logger.getLogger(TaxonomyLoader.class);
 	int transaction_iter = 100000;
 	int LARGE = 100000000;
@@ -60,6 +60,86 @@ public class TaxonomyLoader extends TaxonomyBase{
 		prefSynNodeIndex = graphDb.index().forNodes("prefSynNodes");
 		synNodeIndex = graphDb.index().forNodes("synNodes");
 		taxSourceIndex = graphDb.index().forNodes("taxSources");
+		taxStatusIndex = graphDb.index().forNodes("taxStatus");
+		taxRankIndex = graphDb.index().forNodes("taxRank");
+	}
+	
+	/**
+	 * Returns a node representing the specified combination of taxonomic and nomenclatural status. This may result
+	 *  in the addition of a node to the graph (and taxStatusIndex), or it could simply return a previously created
+	 *  node from taxStatusIndex
+	 * @param taxonomicStatus - 
+	 * @param nomenclaturalStatus
+	 * @param pendingTx - if not null, the any node created by this operation will *not* be associated with 
+	 *  success and finish being called on the transaction object. If pendindTx is null, then a transaction object
+	 *  will be created and finalized for any node creation. 
+	 * @return 
+	 */
+	protected Node getNodeForTaxNomStatus(String taxonomicStatus, String nomenclaturalStatus, Transaction pendingTx) {
+		String key = taxonomicStatus + "|" + nomenclaturalStatus;
+		IndexHits<Node> ih = taxStatusIndex.get("status", key);
+		if (ih.size() == 0) {
+			boolean closeTx = false;
+			if (pendingTx == null) {
+				pendingTx = graphDb.beginTx();
+				closeTx = true;
+			}
+			//create the metadata node
+			Node snode = null;
+			try{
+				snode = graphDb.createNode();
+				snode.setProperty("taxStatus", taxonomicStatus);
+				snode.setProperty("nomenStatus", nomenclaturalStatus);
+				taxStatusIndex.add(snode, "status", key);
+				if (closeTx) {
+					pendingTx.success();
+				}
+			}finally{
+				if (closeTx) {
+					pendingTx.finish();
+				}
+			}
+			return snode;
+		}
+		else {
+			assert(ih.size() == 1);
+			return ih.getSingle();
+		}
+	}
+	/**
+	 * 
+	 * @param taxonomicRank
+	 * @param pendingTx
+	 * @return
+	 */
+	protected Node getNodeForTaxRank(String taxonomicRank, Transaction pendingTx) {
+		IndexHits<Node> ih = taxRankIndex.get("rank", taxonomicRank);
+		if (ih.size() == 0) {
+			boolean closeTx = false;
+			if (pendingTx == null) {
+				pendingTx = graphDb.beginTx();
+				closeTx = true;
+			}
+			//create the metadata node
+			Node snode = null;
+			try{
+				snode = graphDb.createNode();
+				snode.setProperty("rank", taxonomicRank);
+				taxRankIndex.add(snode, "rank", taxonomicRank);
+				if (closeTx) {
+					pendingTx.success();
+				}
+			}finally{
+				if (closeTx) {
+					pendingTx.finish();
+				}
+			}
+			return snode;
+		}
+		else {
+			assert(ih.size() == 1);
+			return ih.getSingle();
+		}
 	}
 	
 	/**
@@ -252,6 +332,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 		}
 		templines.clear();
 	}
+	
 	/**
 	 * Reads the GBIF taxonomy
 	 * @throws FileNotFoundException
@@ -442,7 +523,7 @@ public class TaxonomyLoader extends TaxonomyBase{
 					if ("".equals(acceptedNameUsageIDStr)) {
 						String gbifIDStr = tokenList[0];
 						String parentNameUsageIDStr = tokenList[1];
-						String scientificNameStr = tokenList[3];
+						//String scientificNameStr = tokenList[3];
 						String canonicalNameStr = tokenList[4];
 						String taxonRankStr = tokenList[5];
 						String taxonomicStatusStr = tokenList[6];
@@ -450,14 +531,16 @@ public class TaxonomyLoader extends TaxonomyBase{
 						String genusStr = tokenList[8];
 						String specificEpithetStr = tokenList[9];
 						String infraspecificEpithetStr = tokenList[10];
-						String namePublishedInStr = tokenList[11];
-						String nameAccordingToStr = tokenList[12];
+						//String namePublishedInStr = tokenList[11];
+						//String nameAccordingToStr = tokenList[12];
 						String kingdomStr = tokenList[13];
 						String phylumStr = tokenList[14];
 						String classStr = tokenList[15];
 						String orderStr = tokenList[16];
 						String familyStr = tokenList[17];
 
+						Node tnStatNode = getNodeForTaxNomStatus(taxonomicStatusStr, nomenclaturalStatusStr, tx);
+						Node rankNode = getNodeForTaxRank(taxonRankStr, tx);
 						Node tnode = createNewTaxonomyNode(canonicalNameStr);
 						dbnodes.put(gbifIDStr, tnode);
 						if ("".equals(parentNameUsageIDStr)) {
@@ -468,22 +551,14 @@ public class TaxonomyLoader extends TaxonomyBase{
 						}
 						tnode.setProperty("gbif_ID", gbifIDStr);
 						tnode.setProperty("gbif_parentNameUsageID", parentNameUsageIDStr);
-						tnode.setProperty("gbif_scientificName", scientificNameStr);
+						//tnode.setProperty("gbif_scientificName", scientificNameStr);
 						tnode.setProperty("gbif_canonicalName", canonicalNameStr);
-						tnode.setProperty("gbif_taxonRank", taxonRankStr);
-						tnode.setProperty("gbif_taxonomicStatus", taxonomicStatusStr);
-						tnode.setProperty("gbif_nomenclaturalStatus", nomenclaturalStatusStr);
-						tnode.setProperty("gbif_genus", genusStr);
-						tnode.setProperty("gbif_specificEpithet", specificEpithetStr);
-						tnode.setProperty("gbif_infraspecificEpithet", infraspecificEpithetStr);
-						tnode.setProperty("gbif_namePublishedIn", namePublishedInStr);
-						tnode.setProperty("gbif_nameAccordingTo", nameAccordingToStr);
-						tnode.setProperty("gbif_kingdom", kingdomStr);
-						tnode.setProperty("gbif_phylum", phylumStr);
-						tnode.setProperty("gbif_class", classStr);
-						tnode.setProperty("gbif_order", orderStr);
-						tnode.setProperty("gbif_family", familyStr);
-
+						tnode.setProperty("gbif_taxonRank", rankNode.getId());
+						tnode.setProperty("gbif_taxNomStatus", tnStatNode.getId());
+						//tnode.setProperty("gbif_namePublishedIn", namePublishedInStr);
+						//tnode.setProperty("gbif_nameAccordingTo", nameAccordingToStr);
+						//recordTaxon(tnode, kingdomStr, phylumStr, classStr, orderStr, familyStr, genusStr, specificEpithetStr, infraspecificEpithetStr);
+						
 						count += 1;
 						if (count % transaction_iter == 0){
 							

@@ -18,6 +18,9 @@ public abstract class TaxonomyBase {
 	protected static Index<Node> prefSynNodeIndex;
 	protected static Index<Node> synNodeIndex;
 	protected static Index<Node> taxSourceIndex;
+	protected static Index<Node> taxStatusIndex; // nodes representing combination of taxonomic and nomenclatural status
+	protected static Index<Node> taxRankIndex; // nodes that represent the different taxonomic ranks
+	
 	
 	protected static enum RelTypes implements RelationshipType{
 		TAXCHILDOF, //standard rel for tax db, from node to parent
