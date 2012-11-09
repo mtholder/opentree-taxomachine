@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Properties;
 import java.util.StringTokenizer;
 
@@ -345,6 +346,7 @@ public class TaxonomyLoader extends TaxonomyBase {
 						  Properties prop) throws FileNotFoundException, IOException {
 		HashMap<String,ArrayList<ArrayList<String>>> synonymhash = new HashMap<String,ArrayList<ArrayList<String>>>();
 		ArrayList<Node> parentless = new ArrayList<Node>();
+		
 		if (false) {
 /*
 		Archive archive = ArchiveFactory.openArchive(new File(archiveDir));
@@ -524,23 +526,17 @@ public class TaxonomyLoader extends TaxonomyBase {
 						String gbifIDStr = tokenList[0];
 						String parentNameUsageIDStr = tokenList[1];
 						//String scientificNameStr = tokenList[3];
-						String canonicalNameStr = tokenList[4];
-						String taxonRankStr = tokenList[5];
-						String taxonomicStatusStr = tokenList[6];
-						String nomenclaturalStatusStr = tokenList[7];
-						String genusStr = tokenList[8];
-						String specificEpithetStr = tokenList[9];
-						String infraspecificEpithetStr = tokenList[10];
 						//String namePublishedInStr = tokenList[11];
 						//String nameAccordingToStr = tokenList[12];
-						String kingdomStr = tokenList[13];
-						String phylumStr = tokenList[14];
-						String classStr = tokenList[15];
-						String orderStr = tokenList[16];
-						String familyStr = tokenList[17];
-
-						Node tnStatNode = getNodeForTaxNomStatus(taxonomicStatusStr, nomenclaturalStatusStr, tx);
+						
+						String taxonRankStr = tokenList[5];
 						Node rankNode = getNodeForTaxRank(taxonRankStr, tx);
+						
+						String taxonomicStatusStr = tokenList[6];
+						String nomenclaturalStatusStr = tokenList[7];
+						Node tnStatNode = getNodeForTaxNomStatus(taxonomicStatusStr, nomenclaturalStatusStr, tx);
+						
+						String canonicalNameStr = tokenList[4];
 						Node tnode = createNewTaxonomyNode(canonicalNameStr);
 						dbnodes.put(gbifIDStr, tnode);
 						if ("".equals(parentNameUsageIDStr)) {
@@ -557,7 +553,17 @@ public class TaxonomyLoader extends TaxonomyBase {
 						tnode.setProperty("gbif_taxNomStatus", tnStatNode.getId());
 						//tnode.setProperty("gbif_namePublishedIn", namePublishedInStr);
 						//tnode.setProperty("gbif_nameAccordingTo", nameAccordingToStr);
-						//recordTaxon(tnode, kingdomStr, phylumStr, classStr, orderStr, familyStr, genusStr, specificEpithetStr, infraspecificEpithetStr);
+						/*
+						String genusStr = tokenList[8];
+						String specificEpithetStr = tokenList[9];
+						String infraspecificEpithetStr = tokenList[10];
+						String kingdomStr = tokenList[13];
+						String phylumStr = tokenList[14];
+						String classStr = tokenList[15];
+						String orderStr = tokenList[16];
+						String familyStr = tokenList[17];
+						recordTaxon(tnode, kingdomStr, phylumStr, classStr, orderStr, familyStr, genusStr, specificEpithetStr, infraspecificEpithetStr);
+						*/
 						
 						count += 1;
 						if (count % transaction_iter == 0){
@@ -592,6 +598,7 @@ public class TaxonomyLoader extends TaxonomyBase {
 			// We'll add them the synonym nodes for all of the (presumably valid) names here 
 			tx = graphDb.beginTx();
 			String sourcename = prop.getProperty("name");
+			HashMap<String, Node> synNameToSynNode = new HashMap<String, Node>();
 			try {
 				count = 0;
 				for (String key : dbnodes.keySet()) {
@@ -600,16 +607,8 @@ public class TaxonomyLoader extends TaxonomyBase {
 						Node validNode = dbnodes.get(key);
 						for (int j = 0; j < syns.size(); j++) {
 							count += 1;
-							Node synode = graphDb.createNode();
 							ArrayList<String> row = syns.get(j);
-							String gbifIDStr = row.get(0);
-							String canonicalNameStr = row.get(4);
-							String taxonomicStatusStr = row.get(6);
-							synode.setProperty("name", canonicalNameStr);
-							synode.setProperty("nametype", taxonomicStatusStr);
-							synode.setProperty("gbif_ID", gbifIDStr);
-							synode.setProperty("source", sourcename);
-							synode.createRelationshipTo(validNode, RelTypes.SYNONYMOF);
+							createGBIFSynonymNodeHelper(row, validNode, synNameToSynNode, sourcename);
 							if (count % transaction_iter == 0){
 								System.err.println("Ingested " + count + " synonyms.");
 								tx.success();
@@ -617,6 +616,7 @@ public class TaxonomyLoader extends TaxonomyBase {
 								tx = graphDb.beginTx();
 							}
 						}
+						synonymhash.remove(key);
 					}
 				}
 				System.err.println("Ingested " + count + " synonyms.");
@@ -625,11 +625,95 @@ public class TaxonomyLoader extends TaxonomyBase {
 				tx.finish();
 			}
 			
-			for (Node rootNd : parentless) {
-				System.out.println("created root node and metadata link");
-				metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+			// Now we will add any nodes flagged as that refer to an acceptedNameUsageID, but for which that ID was 
+			//	not in dbnodes. These are cases of "indirect" synonyms in the GBIF taxonomy ( A is valid, B->A, and C->B rather than C->A)
+			int prevNumIndirect = -1;
+			int numIndirect = 0;
+			tx = graphDb.beginTx();
+			try {
+				while (numIndirect != prevNumIndirect) {
+					prevNumIndirect = numIndirect;
+					HashSet<String> toDel = new HashSet<String>(); 
+					for (String key : synonymhash.keySet()) {
+						Node n = synNameToSynNode.get(key); 
+						if (n != null) {
+							toDel.add(key);
+							Node validNode = null;
+							for (Relationship rel : n.getRelationships(Direction.OUTGOING, RelTypes.SYNONYMOF)) {
+								assert(validNode == null); // there should only be one outgoing SYNONYMOF relationship...
+								validNode = rel.getEndNode();
+							}
+							assert(validNode != null);
+
+							numIndirect += 1;
+							ArrayList<ArrayList<String>> syns = synonymhash.get(key);
+							for (int j = 0; j < syns.size(); j++) {
+								count += 1;
+								ArrayList<String> row = syns.get(j);
+								createGBIFSynonymNodeHelper(row, validNode, synNameToSynNode, sourcename);
+								System.err.println("Indirect synonym " + row.get(0) + " -> " + validNode.getProperty("name") + "\n");
+								
+								if (count % transaction_iter == 0){
+									System.err.println("Ingested " + count + " synonyms.");
+									tx.success();
+									tx.finish();
+									tx = graphDb.beginTx();
+								}
+							}
+						}
+					}
+					for (String dk : toDel) {
+						synonymhash.remove(dk);
+					}
+				}
+				tx.success();
+			} finally {
+				tx.finish();
+			}
+			// warn about any synonyms that were not connected to the graph...
+			for (String key : synonymhash.keySet()) {
+				ArrayList<ArrayList<String>> syns = synonymhash.get(key);
+				for (int j = 0; j < syns.size(); j++) {
+					ArrayList<String> row = syns.get(j);
+					System.err.println("Synonym of disconnected name " + row.get(0) + "\n");
+				}
+				
+			}
+
+			//
+			tx = graphDb.beginTx();
+			try {
+				for (Node rootNd : parentless) {
+					System.out.println("created root node and metadata link");
+					metadatanode.createRelationshipTo(rootNd, RelTypes.METADATAFOR);
+				}
+				tx.success();
+			} finally {
+				tx.finish();
 			}
 		}
+	}
+	/**
+	 * @note Assumes that the caller is wrapping this call in a transaction!
+	 * @param row
+	 * @param validNode
+	 * @param synNameToSynNode
+	 * @param sourcename
+	 * @return
+	 */
+	private Node createGBIFSynonymNodeHelper(ArrayList<String> row, Node validNode, HashMap<String, Node> synNameToSynNode, String sourcename){
+		Node synode = graphDb.createNode();
+		String gbifIDStr = row.get(0);
+		String canonicalNameStr = row.get(4);
+		String taxonomicStatusStr = row.get(6);
+		synode.setProperty("name", canonicalNameStr);
+		synode.setProperty("nametype", taxonomicStatusStr);
+		synode.setProperty("gbif_ID", gbifIDStr);
+		synode.setProperty("source", sourcename);
+		Relationship rel = synode.createRelationshipTo(validNode, RelTypes.SYNONYMOF);
+		rel.setProperty("source", sourcename);
+		synNameToSynNode.put(gbifIDStr, synode);
+		return synode;
 	}
 	/**
 	 * Reads a taxonomy file with rows formatted as:
